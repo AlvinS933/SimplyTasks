@@ -6,6 +6,7 @@ import {
   FlatList,
   TouchableOpacity,
   SafeAreaView,
+  Alert,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getAllTasks, toggleTaskComplete, deleteTask } from '../db/database';
@@ -35,12 +36,29 @@ function TaskListScreen({ navigation }) {
     await deleteTask(id);
     loadTasks();
   };
+
+  // Long-press now opens a native action sheet instead of deleting
+  // immediately. Alert.alert's buttons array controls both the options
+  // shown and what happens when each is tapped.
+  const handleLongPress = (item) => {
+    Alert.alert(
+      item.title,
+      'What would you like to do?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Edit', onPress: () => navigation.navigate('NewTask', { task: item }) },
+        { text: 'Delete', style: 'destructive', onPress: () => handleDelete(item.id) },
+      ],
+      { cancelable: true }
+    );
+  };
+ 
  
   const renderItem = ({ item }) => (
     <TouchableOpacity
       style={styles.card}
       onPress={() => handleToggle(item)}
-      onLongPress={() => handleDelete(item.id)}
+      onLongPress={() => handleLongPress(item)}
       activeOpacity={0.7}
     >
       <View style={[styles.checkbox, !!item.completed && styles.checkboxChecked]}>
@@ -74,7 +92,7 @@ function TaskListScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>📋 Tasks</Text>
+        <Text style={styles.headerTitle}>Tasks📋: {new Date().toLocaleDateString()}</Text>
         <Text style={styles.headerSubtitle}>
           {pendingCount} open · {tasks.length - pendingCount} done · stored on this device
         </Text>

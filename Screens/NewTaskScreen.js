@@ -11,14 +11,23 @@ import {
   Platform,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { createTask } from '../db/database';
+import { createTask, updateTask } from '../db/database';
  
-function NewTaskScreen({ navigation }) {
-  const [title, setTitle] = useState('');
-  const [notes, setNotes] = useState('');
+function NewTaskScreen({ navigation, route }) {
+  // If we were opened via navigation.navigate('NewTask', { task: item }),
+  // route.params.task is the existing row — this screen becomes "edit mode".
+  // Otherwise route.params is undefined and this is a normal "create" flow.
+  const editingTask = route?.params?.task ?? null;
+  const isEditing = editingTask !== null;
+ 
+  // Pre-fill the form fields with the existing task's data if we're editing, otherwise start with empty/default values.
+  const [title, setTitle] = useState(editingTask?.title ?? '');
+  const [notes, setNotes] = useState(editingTask?.notes ?? '');
   // Stored as a JS Date object while editing; converted to a timestamp
   // (Date.getTime()) only at save time, to match the INTEGER column in SQLite.
-  const [dueDate, setDueDate] = useState(null);
+  const [dueDate, setDueDate] = useState(
+    editingTask?.due_date ? new Date(editingTask.due_date) : null
+  );
   const [showPicker, setShowPicker] = useState(false);
   const [saving, setSaving] = useState(false);
  
@@ -27,11 +36,16 @@ function NewTaskScreen({ navigation }) {
   const handleSave = async () => {
     if (!canSave || saving) return;
     setSaving(true);
-    await createTask({
+    const payload = {
       title: title.trim(),
       notes,
       dueDate: dueDate ? dueDate.getTime() : null,
-    });
+    };
+    if (isEditing) {
+      await updateTask(editingTask.id, payload);
+    } else {
+      await createTask(payload);
+    }
     setSaving(false);
     navigation.goBack();
   };
@@ -55,7 +69,7 @@ function NewTaskScreen({ navigation }) {
     >
       <SafeAreaView style={styles.container}>
         <ScrollView contentContainerStyle={styles.scroll}>
-          <Text style={styles.header}>New Task</Text>
+          <Text style={styles.header}>{isEditing ? 'Edit Task' : 'New Task'}</Text>
  
           <Text style={styles.label}>Title</Text>
           <TextInput
@@ -131,7 +145,9 @@ function NewTaskScreen({ navigation }) {
             onPress={handleSave}
             disabled={!canSave || saving}
           >
-            <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save Task'}</Text>
+            <Text style={styles.saveButtonText}>
+              {saving ? 'Saving…' : isEditing ? 'Update Task' : 'Save Task'}
+            </Text>
           </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
@@ -186,3 +202,4 @@ const styles = StyleSheet.create({
 });
  
 export default NewTaskScreen;
+ 

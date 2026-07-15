@@ -77,4 +77,12 @@ export async function deleteAllTasks() {
   const db = await getDb();
   await db.runAsync(`DELETE FROM tasks`);
 }
+
+export async function updateTask(id, { title, notes, dueDate }) {
+  const db  = await getDb();
+  await db.runAsync(
+    `UPDATE tasks SET title = ?, notes = ?, due_date = ?, updated_at = ?, synced = 0 WHERE id = ?`,
+    [title, notes ?? '', dueDate ?? null, Date.now(), id]
+  );
+}
  
