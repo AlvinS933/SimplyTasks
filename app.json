@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "PocketTasks",
+    "slug": "ice",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "1d98f3cb-1c0b-4e6a-acf0-2c37880c8ab6"
+      }
+    },
+    "owner": "ice72828s-team",
+    "plugins": [
+      "expo-sqlite",
+      "@react-native-community/datetimepicker"
+    ]
+  }
+}
