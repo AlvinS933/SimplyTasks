@@ -19,6 +19,9 @@ function NewTaskScreen({ navigation, route }) {
   // Otherwise route.params is undefined and this is a normal "create" flow.
   const editingTask = route?.params?.task ?? null;
   const isEditing = editingTask !== null;
+  // Which list a newly-created task belongs to. Passed by TaskListScreen; when
+  // editing we already know the list from the existing row.
+  const listId = route?.params?.listId ?? editingTask?.list_id ?? null;
  
   // Pre-fill the form fields with the existing task's data if we're editing, otherwise start with empty/default values.
   const [title, setTitle] = useState(editingTask?.title ?? '');
@@ -44,7 +47,7 @@ function NewTaskScreen({ navigation, route }) {
     if (isEditing) {
       await updateTask(editingTask.id, payload);
     } else {
-      await createTask(payload);
+      await createTask({ ...payload, listId });
     }
     setSaving(false);
     navigation.goBack();

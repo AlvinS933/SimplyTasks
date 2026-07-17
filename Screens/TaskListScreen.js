@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -9,56 +9,84 @@ import {
   Alert,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getAllTasks, toggleTaskComplete, deleteTask, deleteAllTasks} from '../db/database';
- 
-function TaskListScreen({ navigation }) {
+import {
+  getTasksForList,
+  toggleTaskComplete,
+  deleteTask,
+  deleteAllTasksInList,
+} from '../db/database';
+
+function TaskListScreen({ navigation, route }) {
+  // This screen is always opened for a specific list (from ListsScreen).
+  const { list } = route.params;
+
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
- 
+
   const loadTasks = useCallback(async () => {
-    const rows = await getAllTasks();
+    const rows = await getTasksForList(list.id);
     setTasks(rows);
     setLoading(false);
-  }, []);
- 
+  }, [list.id]);
+
   useFocusEffect(
     useCallback(() => {
       loadTasks();
     }, [loadTasks])
   );
- 
+
+  // Put the list name in the header and a Share action on the right.
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      title: list.name,
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={() => navigation.navigate('ShareList', { list })}
+          hitSlop={10}
+        >
+          <Text style={styles.headerAction}>Share</Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, list]);
+
   const handleToggle = async (task) => {
     await toggleTaskComplete(task.id, task.completed ? 0 : 1);
     loadTasks();
   };
- 
+
   const handleDelete = async (id) => {
     await deleteTask(id);
     loadTasks();
   };
 
   const handleClearAll = async () => {
-    await deleteAllTasks();
+    await deleteAllTasksInList(list.id);
     loadTasks();
   };
 
-  // Long-press now opens a native action sheet instead of deleting
-  // immediately. Alert.alert's buttons array controls both the options
-  // shown and what happens when each is tapped.
+  // Long-press opens a native action sheet: Edit or Delete.
   const handleLongPress = (item) => {
     Alert.alert(
       item.title,
       'What would you like to do?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Edit', onPress: () => navigation.navigate('NewTask', { task: item }) },
-        { text: 'Delete', style: 'destructive', onPress: () => handleDelete(item.id) },
+        {
+          text: 'Edit',
+          onPress: () =>
+            navigation.navigate('NewTask', { task: item, listId: list.id }),
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => handleDelete(item.id),
+        },
       ],
       { cancelable: true }
     );
   };
- 
- 
+
   const renderItem = ({ item }) => (
     <TouchableOpacity
       style={styles.card}
@@ -69,7 +97,7 @@ function TaskListScreen({ navigation }) {
       <View style={[styles.checkbox, !!item.completed && styles.checkboxChecked]}>
         {!!item.completed && <Text style={styles.checkmark}>✓</Text>}
       </View>
- 
+
       <View style={styles.taskBody}>
         <Text style={[styles.title, !!item.completed && styles.titleCompleted]}>
           {item.title}
@@ -85,63 +113,62 @@ function TaskListScreen({ navigation }) {
           </Text>
         )}
       </View>
- 
+
       <Text style={item.synced ? styles.syncedBadge : styles.pendingBadge}>
         {item.synced ? '☁' : '●'}
       </Text>
     </TouchableOpacity>
   );
- 
+
   const pendingCount = tasks.filter((t) => !t.completed).length;
- 
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Tasks📋: {new Date().toLocaleDateString()}</Text>
         <Text style={styles.headerSubtitle}>
           {pendingCount} open · {tasks.length - pendingCount} done · stored on this device
         </Text>
       </View>
- 
+
       {!loading && tasks.length === 0 && (
         <View style={styles.emptyState}>
           <Text style={styles.emptyText}>No tasks yet.</Text>
           <Text style={styles.emptySubtext}>Add your first one below.</Text>
         </View>
       )}
- 
+
       <FlatList
         data={tasks}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
         contentContainerStyle={styles.list}
       />
- 
+
       <TouchableOpacity
         style={[styles.addButton, styles.newButton]}
-        onPress={() => navigation.navigate('NewTask')}
+        onPress={() => navigation.navigate('NewTask', { listId: list.id })}
         activeOpacity={0.85}
       >
         <Text style={styles.addButtonText}>+ New Task</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={[styles.addButton, styles.clearButton, tasks.length === 0 && styles.clearButtonDisabled]}
-        onPress={() => Alert.alert(
-          'Clear All Tasks',
-          'Are you sure you want to delete all tasks? This action cannot be undone.', [
-            {
-              text: 'Cancel',
-              style: 'cancel'
-            },
-            {
-              text: 'Delete All',
-              style: 'destructive',
-              onPress: handleClearAll
-            }
-          ])
+        style={[
+          styles.addButton,
+          styles.clearButton,
+          tasks.length === 0 && styles.clearButtonDisabled,
+        ]}
+        onPress={() =>
+          Alert.alert(
+            'Clear All Tasks',
+            'Are you sure you want to delete all tasks in this list? This cannot be undone.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Delete All', style: 'destructive', onPress: handleClearAll },
+            ]
+          )
         }
-        disabled = {tasks.length === 0}
+        disabled={tasks.length === 0}
         activeOpacity={0.85}
       >
         <Text style={styles.addButtonText}>- Clear Tasks</Text>
@@ -149,12 +176,12 @@ function TaskListScreen({ navigation }) {
     </SafeAreaView>
   );
 }
- 
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f7f8fa' },
-  header: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 },
-  headerTitle: { fontSize: 24, fontWeight: '700' },
-  headerSubtitle: { fontSize: 13, color: '#888', marginTop: 2 },
+  headerAction: { color: '#007AFF', fontSize: 15, fontWeight: '600' },
+  header: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4 },
+  headerSubtitle: { fontSize: 13, color: '#888' },
   list: { paddingHorizontal: 16, paddingBottom: 100 },
   card: {
     flexDirection: 'row',
@@ -199,18 +226,10 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 30,
   },
-  newButton: {
-  left: 36,
-  },
-  clearButton: {
-    right: 36,
-    backgroundColor: '#e74c3c',
-  },
-  clearButtonDisabled: {
-  opacity: 0.4,
-  },
+  newButton: { left: 36 },
+  clearButton: { right: 36, backgroundColor: '#e74c3c' },
+  clearButtonDisabled: { opacity: 0.4 },
   addButtonText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });
- 
+
 export default TaskListScreen;
- 
