@@ -9,7 +9,7 @@ import {
   Alert,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getAllTasks, toggleTaskComplete, deleteTask } from '../db/database';
+import { getAllTasks, toggleTaskComplete, deleteTask, deleteAllTasks} from '../db/database';
  
 function TaskListScreen({ navigation }) {
   const [tasks, setTasks] = useState([]);
@@ -34,6 +34,11 @@ function TaskListScreen({ navigation }) {
  
   const handleDelete = async (id) => {
     await deleteTask(id);
+    loadTasks();
+  };
+
+  const handleClearAll = async () => {
+    await deleteAllTasks();
     loadTasks();
   };
 
@@ -122,9 +127,20 @@ function TaskListScreen({ navigation }) {
 
       <TouchableOpacity
         style={[styles.addButton, styles.clearButton, tasks.length === 0 && styles.clearButtonDisabled]}
-        onPress={() => {
-            tasks.forEach((task) => handleDelete(task.id));
-        }}
+        onPress={() => Alert.alert(
+          'Clear All Tasks',
+          'Are you sure you want to delete all tasks? This action cannot be undone.', [
+            {
+              text: 'Cancel',
+              style: 'cancel'
+            },
+            {
+              text: 'Delete All',
+              style: 'destructive',
+              onPress: handleClearAll
+            }
+          ])
+        }
         disabled = {tasks.length === 0}
         activeOpacity={0.85}
       >
