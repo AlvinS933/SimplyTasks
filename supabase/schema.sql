@@ -110,10 +110,15 @@ drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_update_own" on public.profiles
   for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
 
--- lists: members can read/update; you can only insert a list you own.
+-- lists: the owner can always read/update their own list (independent of
+-- membership rows — important because a client upsert compiles to
+-- INSERT ... ON CONFLICT DO UPDATE, so the UPDATE check is evaluated even for a
+-- brand-new list whose membership row hasn't synced yet). Shared members get
+-- access via is_member. You can only insert a list you own.
 drop policy if exists "lists_select" on public.lists;
 create policy "lists_select" on public.lists
-  for select to authenticated using (public.is_member(id, auth.uid()));
+  for select to authenticated
+  using (owner_id = auth.uid() or public.is_member(id, auth.uid()));
 
 drop policy if exists "lists_insert" on public.lists;
 create policy "lists_insert" on public.lists
@@ -122,8 +127,8 @@ create policy "lists_insert" on public.lists
 drop policy if exists "lists_update" on public.lists;
 create policy "lists_update" on public.lists
   for update to authenticated
-  using (public.is_member(id, auth.uid()))
-  with check (public.is_member(id, auth.uid()));
+  using (owner_id = auth.uid() or public.is_member(id, auth.uid()))
+  with check (owner_id = auth.uid() or public.is_member(id, auth.uid()));
 
 -- list_members: members can see the roster; you can insert yourself (when
 -- creating a list) or, as the owner, add others; only the owner changes roles.

@@ -22,6 +22,9 @@ export function makeId() {
 
 // DEV ONLY: wipes the entire local cache, then recreates the empty schema.
 // This does NOT touch the server — a later sync just re-pulls everything.
+// NOTE: closes/deletes the DB file, so only call this when nothing else is
+// touching the database (e.g. a dev button). For clearing on account switch,
+// use clearAllData() instead — it keeps the connection open and is race-safe.
 export async function resetDatabase() {
   if (dbPromise) {
     const db = await dbPromise;
@@ -30,6 +33,19 @@ export async function resetDatabase() {
   }
   await SQLite.deleteDatabaseAsync(DB_NAME);
   await initDatabase();
+}
+
+// Empties every table without closing/deleting the database file. Safe to call
+// while the app is running (SQLite serializes these against any in-flight
+// queries on the same connection). Used when a different user signs in.
+export async function clearAllData() {
+  const db = await getDb();
+  await db.execAsync(`
+    DELETE FROM tasks;
+    DELETE FROM list_members;
+    DELETE FROM lists;
+    DELETE FROM profiles;
+  `);
 }
 
 export async function initDatabase() {
