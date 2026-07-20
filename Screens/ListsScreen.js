@@ -13,7 +13,7 @@ import { getListsForUser, deleteList } from '../db/database';
 import { useAuth } from '../lib/AuthContext';
 
 function ListsScreen({ navigation }) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, syncNow } = useAuth();
   const [lists, setLists] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -23,10 +23,20 @@ function ListsScreen({ navigation }) {
     setLoading(false);
   }, [user.id]);
 
+  // Offline-first: render local data immediately, then sync in the background
+  // and re-render with anything new that arrived.
   useFocusEffect(
     useCallback(() => {
-      loadLists();
-    }, [loadLists])
+      let active = true;
+      (async () => {
+        await loadLists();
+        await syncNow();
+        if (active) await loadLists();
+      })();
+      return () => {
+        active = false;
+      };
+    }, [loadLists, syncNow])
   );
 
   const handleLongPress = (item) => {
@@ -47,7 +57,8 @@ function ListsScreen({ navigation }) {
                 style: 'destructive',
                 onPress: async () => {
                   await deleteList(item.id);
-                  loadLists();
+                  await loadLists();
+                  syncNow();
                 },
               },
             ]

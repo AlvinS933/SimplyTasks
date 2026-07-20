@@ -15,10 +15,12 @@ import {
   deleteTask,
   deleteAllTasksInList,
 } from '../db/database';
+import { useAuth } from '../lib/AuthContext';
 
 function TaskListScreen({ navigation, route }) {
   // This screen is always opened for a specific list (from ListsScreen).
   const { list } = route.params;
+  const { syncNow } = useAuth();
 
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,10 +31,19 @@ function TaskListScreen({ navigation, route }) {
     setLoading(false);
   }, [list.id]);
 
+  // Offline-first: show local tasks immediately, sync, then refresh.
   useFocusEffect(
     useCallback(() => {
-      loadTasks();
-    }, [loadTasks])
+      let active = true;
+      (async () => {
+        await loadTasks();
+        await syncNow();
+        if (active) await loadTasks();
+      })();
+      return () => {
+        active = false;
+      };
+    }, [loadTasks, syncNow])
   );
 
   // Put the list name in the header and a Share action on the right.
@@ -52,17 +63,20 @@ function TaskListScreen({ navigation, route }) {
 
   const handleToggle = async (task) => {
     await toggleTaskComplete(task.id, task.completed ? 0 : 1);
-    loadTasks();
+    await loadTasks();
+    syncNow();
   };
 
   const handleDelete = async (id) => {
     await deleteTask(id);
-    loadTasks();
+    await loadTasks();
+    syncNow();
   };
 
   const handleClearAll = async () => {
     await deleteAllTasksInList(list.id);
-    loadTasks();
+    await loadTasks();
+    syncNow();
   };
 
   // Long-press opens a native action sheet: Edit or Delete.

@@ -11,10 +11,13 @@ import {
   Platform,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { shareListByEmail, getMembersForList } from '../db/database';
+import { getMembersForList } from '../db/database';
+import { shareList } from '../lib/sync';
+import { useAuth } from '../lib/AuthContext';
 
 function ShareListScreen({ route }) {
   const { list } = route.params;
+  const { user } = useAuth();
   const [email, setEmail] = useState('');
   const [members, setMembers] = useState([]);
   const [message, setMessage] = useState(null); // { type: 'ok' | 'error', text }
@@ -34,7 +37,7 @@ function ShareListScreen({ route }) {
     if (busy || !email.trim()) return;
     setBusy(true);
     setMessage(null);
-    const result = await shareListByEmail(list.id, email);
+    const result = await shareList(list.id, email, user.id);
     if (result.ok) {
       setMessage({ type: 'ok', text: `Shared with ${result.user.email}.` });
       setEmail('');
@@ -42,10 +45,14 @@ function ShareListScreen({ route }) {
     } else if (result.reason === 'not_found') {
       setMessage({
         type: 'error',
-        text: 'No account with that email exists on this device yet.',
+        text: 'No account found with that email. They need to sign up first.',
       });
     } else if (result.reason === 'already_member') {
       setMessage({ type: 'error', text: 'That person is already on this list.' });
+    } else if (result.reason === 'not_configured') {
+      setMessage({ type: 'error', text: 'Sharing needs Supabase configured (see supabase/README.md).' });
+    } else {
+      setMessage({ type: 'error', text: 'Could not share right now — check your connection.' });
     }
     setBusy(false);
   };

@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useAuth } from '../lib/AuthContext';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 function AuthScreen() {
   const { signIn, signUp } = useAuth();
@@ -58,6 +59,14 @@ function AuthScreen() {
           <Text style={styles.subtitle}>
             {isSignUp ? 'Create your account' : 'Welcome back'}
           </Text>
+
+          {!isSupabaseConfigured && (
+            <Text style={styles.configWarning}>
+              Supabase isn't configured yet. Copy .env.example to .env with your
+              project's URL and anon key, then restart with `npx expo start -c`.
+              See supabase/README.md.
+            </Text>
+          )}
 
           {isSignUp && (
             <>
@@ -145,6 +154,14 @@ const styles = StyleSheet.create({
     borderColor: '#e5e5e5',
   },
   error: { color: '#e74c3c', fontSize: 13, marginTop: 14 },
+  configWarning: {
+    color: '#8a6d3b',
+    backgroundColor: '#fcf8e3',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 12,
+    marginBottom: 8,
+  },
   button: {
     backgroundColor: '#111',
     borderRadius: 12,

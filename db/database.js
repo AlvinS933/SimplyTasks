@@ -1,65 +1,54 @@
 import * as SQLite from 'expo-sqlite';
 import * as Crypto from 'expo-crypto';
 
+// Bumped filename: auth moved from local accounts to Supabase Auth, so user
+// ids (and therefore owner_id / member ids on old rows) are no longer valid.
+// A fresh file avoids mixing the two identity models.
+const DB_NAME = 'simplytasks-v2.db';
+
 let dbPromise = null;
 
-// New filename -> forces a fresh SQLite file. The previous single-table
-// "tasks" database is left behind (unused) rather than migrated, since the
-// multi-user / shared-list schema below is a significant redesign.
 function getDb() {
   if (!dbPromise) {
-    dbPromise = SQLite.openDatabaseAsync('simplytasks.db');
+    dbPromise = SQLite.openDatabaseAsync(DB_NAME);
   }
   return dbPromise;
 }
 
-// Real UUIDs (instead of the old timestamp+random ids) so that when these
-// rows eventually sync to Postgres the primary-key type matches exactly.
+// Real UUIDs so local ids match the Postgres uuid primary keys exactly.
 export function makeId() {
   return Crypto.randomUUID();
 }
 
-// DEV ONLY: wipes the entire local database (all users, lists, tasks, and the
-// login session), then recreates the empty schema. Close the open handle first
-// so WAL files are released before the delete. Call initDatabase() again — or
-// just relaunch the app — after this.
+// DEV ONLY: wipes the entire local cache, then recreates the empty schema.
+// This does NOT touch the server — a later sync just re-pulls everything.
 export async function resetDatabase() {
   if (dbPromise) {
     const db = await dbPromise;
     await db.closeAsync();
     dbPromise = null;
   }
-  await SQLite.deleteDatabaseAsync('simplytasks.db');
+  await SQLite.deleteDatabaseAsync(DB_NAME);
   await initDatabase();
 }
 
 export async function initDatabase() {
   const db = await getDb();
 
-  // Every user-owned row carries:
-  //   updated_at -> drives last-write-wins conflict resolution during a
-  //                 future sync phase.
-  //   deleted    -> tombstone. We never hard-delete, because a hard DELETE
-  //                 can't be communicated to other devices/servers later.
+  // Per-row sync bookkeeping:
+  //   updated_at -> epoch ms; drives last-write-wins during sync.
+  //   deleted    -> tombstone (never hard-delete; deletes must sync).
   //   synced     -> 0 = local change not yet pushed, 1 = matches server.
+  // No users/session tables anymore: Supabase Auth owns identity and its JS
+  // client persists the session in AsyncStorage. `profiles` is a local cache
+  // of the server profiles table, used to show member names offline.
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
 
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE IF NOT EXISTS profiles (
       id TEXT PRIMARY KEY NOT NULL,
-      email TEXT NOT NULL UNIQUE,
-      name TEXT,
-      password_hash TEXT NOT NULL,
-      salt TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-
-    -- Single-row table holding whoever is currently logged in on this device.
-    -- Replaced by supabase.auth's persisted session once the backend lands.
-    CREATE TABLE IF NOT EXISTS session (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      user_id TEXT
+      email TEXT,
+      name TEXT
     );
 
     CREATE TABLE IF NOT EXISTS lists (
@@ -72,8 +61,6 @@ export async function initDatabase() {
       synced INTEGER NOT NULL DEFAULT 0
     );
 
-    -- Who can see/edit each list. Sharing = inserting a row here.
-    -- role: 'owner' | 'editor' | 'viewer'
     CREATE TABLE IF NOT EXISTS list_members (
       list_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
@@ -98,54 +85,23 @@ export async function initDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_tasks_list ON tasks (list_id);
     CREATE INDEX IF NOT EXISTS idx_members_user ON list_members (user_id);
+    CREATE INDEX IF NOT EXISTS idx_lists_synced ON lists (synced);
+    CREATE INDEX IF NOT EXISTS idx_tasks_synced ON tasks (synced);
+    CREATE INDEX IF NOT EXISTS idx_members_synced ON list_members (synced);
   `);
 }
 
 /* ------------------------------------------------------------------ */
-/* Users                                                               */
+/* Profiles (local cache of the server profiles table)                 */
 /* ------------------------------------------------------------------ */
 
-export async function insertUser({ id, email, name, passwordHash, salt }) {
+export async function upsertProfile({ id, email, name }) {
   const db = await getDb();
   await db.runAsync(
-    `INSERT INTO users (id, email, name, password_hash, salt, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, email, name ?? null, passwordHash, salt, Date.now()]
+    `INSERT INTO profiles (id, email, name) VALUES (?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name`,
+    [id, email ?? null, name ?? null]
   );
-}
-
-export async function getUserByEmail(email) {
-  const db = await getDb();
-  return db.getFirstAsync(`SELECT * FROM users WHERE email = ?`, [email]);
-}
-
-export async function getUserById(id) {
-  const db = await getDb();
-  return db.getFirstAsync(`SELECT * FROM users WHERE id = ?`, [id]);
-}
-
-/* ------------------------------------------------------------------ */
-/* Session (local "who is logged in")                                  */
-/* ------------------------------------------------------------------ */
-
-export async function setSession(userId) {
-  const db = await getDb();
-  await db.runAsync(
-    `INSERT INTO session (id, user_id) VALUES (1, ?)
-     ON CONFLICT(id) DO UPDATE SET user_id = excluded.user_id`,
-    [userId]
-  );
-}
-
-export async function getSessionUserId() {
-  const db = await getDb();
-  const row = await db.getFirstAsync(`SELECT user_id FROM session WHERE id = 1`);
-  return row?.user_id ?? null;
-}
-
-export async function clearSession() {
-  const db = await getDb();
-  await db.runAsync(`DELETE FROM session WHERE id = 1`);
 }
 
 /* ------------------------------------------------------------------ */
@@ -153,7 +109,7 @@ export async function clearSession() {
 /* ------------------------------------------------------------------ */
 
 // Creates the list AND the owner's membership row in one transaction, so a
-// list is never left without at least one member who can see it.
+// list is never left without a member who can see it.
 export async function createList({ name, ownerId }) {
   const db = await getDb();
   const id = makeId();
@@ -173,8 +129,7 @@ export async function createList({ name, ownerId }) {
   return id;
 }
 
-// Every list this user is a member of (owned or shared with them), plus a
-// live count of open (incomplete, not deleted) tasks for the list card.
+// Every non-deleted list this user is a member of, with a live open-task count.
 export async function getListsForUser(userId) {
   const db = await getDb();
   return db.getAllAsync(
@@ -198,7 +153,7 @@ export async function renameList(id, name) {
   );
 }
 
-// Soft-delete the list and all of its tasks (tombstones, not real deletes).
+// Soft-delete the list and all of its tasks (tombstones, not hard deletes).
 export async function deleteList(id) {
   const db = await getDb();
   const now = Date.now();
@@ -220,36 +175,32 @@ export async function deleteList(id) {
 
 export async function getMembersForList(listId) {
   const db = await getDb();
+  // LEFT JOIN so a member still shows even if their profile isn't cached yet.
   return db.getAllAsync(
-    `SELECT u.id, u.email, u.name, m.role
+    `SELECT m.user_id AS id, p.email, p.name, m.role
        FROM list_members m
-       JOIN users u ON u.id = m.user_id
+       LEFT JOIN profiles p ON p.id = m.user_id
       WHERE m.list_id = ?
       ORDER BY m.created_at ASC`,
     [listId]
   );
 }
 
-// Shares a list with an existing local user, looked up by email. Returns a
-// small result object so the UI can show a friendly message. (Pre-backend,
-// you can only share with accounts that exist on this device.)
-export async function shareListByEmail(listId, email, role = 'editor') {
+// Adds a membership row (unsynced). Returns whether it was newly inserted so
+// callers can message "already shared" vs. "shared".
+export async function addMember({ listId, userId, role = 'editor' }) {
   const db = await getDb();
-  const user = await getUserByEmail(email.trim().toLowerCase());
-  if (!user) return { ok: false, reason: 'not_found' };
-
   const existing = await db.getFirstAsync(
     `SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?`,
-    [listId, user.id]
+    [listId, userId]
   );
-  if (existing) return { ok: false, reason: 'already_member' };
-
+  if (existing) return { inserted: false };
   await db.runAsync(
     `INSERT INTO list_members (list_id, user_id, role, created_at, synced)
      VALUES (?, ?, ?, ?, 0)`,
-    [listId, user.id, role, Date.now()]
+    [listId, userId, role, Date.now()]
   );
-  return { ok: true, user };
+  return { inserted: true };
 }
 
 /* ------------------------------------------------------------------ */
@@ -258,7 +209,6 @@ export async function shareListByEmail(listId, email, role = 'editor') {
 
 export async function getTasksForList(listId) {
   const db = await getDb();
-  // Incomplete first, newest first within each group; tombstones hidden.
   return db.getAllAsync(
     `SELECT * FROM tasks
       WHERE list_id = ? AND deleted = 0
@@ -308,5 +258,103 @@ export async function deleteAllTasksInList(listId) {
   await db.runAsync(
     `UPDATE tasks SET deleted = 1, updated_at = ?, synced = 0 WHERE list_id = ? AND deleted = 0`,
     [Date.now(), listId]
+  );
+}
+
+/* ================================================================== */
+/* Sync support                                                        */
+/* ================================================================== */
+
+/* --- Outbound: rows with local changes not yet pushed -------------- */
+
+export async function getUnsyncedLists() {
+  const db = await getDb();
+  return db.getAllAsync(`SELECT * FROM lists WHERE synced = 0`);
+}
+
+export async function getUnsyncedMembers() {
+  const db = await getDb();
+  return db.getAllAsync(`SELECT * FROM list_members WHERE synced = 0`);
+}
+
+export async function getUnsyncedTasks() {
+  const db = await getDb();
+  return db.getAllAsync(`SELECT * FROM tasks WHERE synced = 0`);
+}
+
+export async function markListsSynced(ids) {
+  const db = await getDb();
+  for (const id of ids) {
+    await db.runAsync(`UPDATE lists SET synced = 1 WHERE id = ?`, [id]);
+  }
+}
+
+export async function markTasksSynced(ids) {
+  const db = await getDb();
+  for (const id of ids) {
+    await db.runAsync(`UPDATE tasks SET synced = 1 WHERE id = ?`, [id]);
+  }
+}
+
+export async function markMembersSynced(members) {
+  const db = await getDb();
+  for (const m of members) {
+    await db.runAsync(
+      `UPDATE list_members SET synced = 1 WHERE list_id = ? AND user_id = ?`,
+      [m.list_id, m.user_id]
+    );
+  }
+}
+
+/* --- Inbound: apply a remote row locally (last-write-wins) ---------- */
+
+// The `WHERE excluded.updated_at > lists.updated_at` guard means a remote row
+// only overwrites the local one if it's genuinely newer. A local row with a
+// pending (unsynced) newer edit is left alone, so it survives to be pushed.
+export async function applyRemoteList(r) {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO lists (id, name, owner_id, created_at, updated_at, deleted, synced)
+     VALUES (?, ?, ?, ?, ?, ?, 1)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       owner_id = excluded.owner_id,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       deleted = excluded.deleted,
+       synced = 1
+     WHERE excluded.updated_at > lists.updated_at`,
+    [r.id, r.name, r.owner_id, r.created_at, r.updated_at, r.deleted]
+  );
+}
+
+export async function applyRemoteTask(r) {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO tasks (id, list_id, title, notes, due_date, completed, created_at, updated_at, deleted, synced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+     ON CONFLICT(id) DO UPDATE SET
+       list_id = excluded.list_id,
+       title = excluded.title,
+       notes = excluded.notes,
+       due_date = excluded.due_date,
+       completed = excluded.completed,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       deleted = excluded.deleted,
+       synced = 1
+     WHERE excluded.updated_at > tasks.updated_at`,
+    [r.id, r.list_id, r.title, r.notes, r.due_date, r.completed, r.created_at, r.updated_at, r.deleted]
+  );
+}
+
+// Membership has no updated_at; just take the server's role and mark synced.
+export async function applyRemoteMember(r) {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO list_members (list_id, user_id, role, created_at, synced)
+     VALUES (?, ?, ?, ?, 1)
+     ON CONFLICT(list_id, user_id) DO UPDATE SET role = excluded.role, synced = 1`,
+    [r.list_id, r.user_id, r.role, r.created_at]
   );
 }
