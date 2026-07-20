@@ -11,6 +11,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { getListsForUser, deleteList } from '../db/database';
 import { useAuth } from '../lib/AuthContext';
+import { subscribeToSyncUpdates } from '../lib/sync';
 
 function ListsScreen({ navigation }) {
   const { user, signOut, syncNow } = useAuth();
@@ -33,8 +34,13 @@ function ListsScreen({ navigation }) {
         await syncNow();
         if (active) await loadLists();
       })();
+      // Re-read whenever a sync applies remote changes (incl. realtime events).
+      const unsub = subscribeToSyncUpdates(() => {
+        if (active) loadLists();
+      });
       return () => {
         active = false;
+        unsub();
       };
     }, [loadLists, syncNow])
   );

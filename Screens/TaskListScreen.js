@@ -16,6 +16,7 @@ import {
   deleteAllTasksInList,
 } from '../db/database';
 import { useAuth } from '../lib/AuthContext';
+import { subscribeToSyncUpdates } from '../lib/sync';
 
 function TaskListScreen({ navigation, route }) {
   // This screen is always opened for a specific list (from ListsScreen).
@@ -40,8 +41,13 @@ function TaskListScreen({ navigation, route }) {
         await syncNow();
         if (active) await loadTasks();
       })();
+      // Re-read whenever a sync applies remote changes (incl. realtime events).
+      const unsub = subscribeToSyncUpdates(() => {
+        if (active) loadTasks();
+      });
       return () => {
         active = false;
+        unsub();
       };
     }, [loadTasks, syncNow])
   );

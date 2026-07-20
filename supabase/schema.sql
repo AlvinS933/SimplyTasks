@@ -159,3 +159,30 @@ create policy "tasks_all" on public.tasks
   for all to authenticated
   using (public.is_member(list_id, auth.uid()) or public.is_owner(list_id, auth.uid()))
   with check (public.is_member(list_id, auth.uid()) or public.is_owner(list_id, auth.uid()));
+
+------------------------------------------------------------------------
+-- 5. Realtime — add the synced tables to the realtime publication so the
+--    app receives live change events. RLS still applies, so each client only
+--    gets changes for rows it can see. Wrapped so re-running is safe (adding a
+--    table that's already in the publication would otherwise error).
+--    We use tombstones (deleted = true) rather than hard DELETEs, so the
+--    default replica identity (primary key) is sufficient — no need for
+--    "replica identity full".
+------------------------------------------------------------------------
+do $$
+begin
+  alter publication supabase_realtime add table public.lists;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  alter publication supabase_realtime add table public.list_members;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  alter publication supabase_realtime add table public.tasks;
+exception when duplicate_object then null;
+end $$;
