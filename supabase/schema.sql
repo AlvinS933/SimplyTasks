@@ -134,7 +134,12 @@ create policy "lists_update" on public.lists
 -- creating a list) or, as the owner, add others; only the owner changes roles.
 drop policy if exists "members_select" on public.list_members;
 create policy "members_select" on public.list_members
-  for select to authenticated using (public.is_member(list_id, auth.uid()));
+  for select to authenticated
+  using (
+    user_id = auth.uid()
+    or public.is_owner(list_id, auth.uid())
+    or public.is_member(list_id, auth.uid())
+  );
 
 drop policy if exists "members_insert" on public.list_members;
 create policy "members_insert" on public.list_members
@@ -147,9 +152,10 @@ create policy "members_update" on public.list_members
   using (public.is_owner(list_id, auth.uid()))
   with check (public.is_owner(list_id, auth.uid()));
 
--- tasks: full read/write for any member of the task's list.
+-- tasks: read/write for any member of the task's list, or the list's owner
+-- (owner access shouldn't depend on their membership row having synced first).
 drop policy if exists "tasks_all" on public.tasks;
 create policy "tasks_all" on public.tasks
   for all to authenticated
-  using (public.is_member(list_id, auth.uid()))
-  with check (public.is_member(list_id, auth.uid()));
+  using (public.is_member(list_id, auth.uid()) or public.is_owner(list_id, auth.uid()))
+  with check (public.is_member(list_id, auth.uid()) or public.is_owner(list_id, auth.uid()));
