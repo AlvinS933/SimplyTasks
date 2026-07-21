@@ -34,6 +34,11 @@ yarn-error.*
 .env
 .env*.local
 
+# EAS build config — contains your Supabase publishable key. The key is
+# client-safe (RLS protects data), so committing is OK; kept out of git here
+# just for tidiness. eas-cli reads it locally, so builds still work.
+eas.json
+
 # typescript
 *.tsbuildinfo
 
